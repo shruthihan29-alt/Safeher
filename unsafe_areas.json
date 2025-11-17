@@ -1,0 +1,20 @@
+[
+  {
+    "name": "Dark park area",
+    "lat": 6.9271,
+    "lng": 79.8612,
+    "radiusMeters": 300
+  },
+  {
+    "name": "Reported harassment spot",
+    "lat": 6.9147,
+    "lng": 79.8622,
+    "radiusMeters": 250
+  },
+  {
+    "name": "Poorly lit street",
+    "lat": 6.9300,
+    "lng": 79.8500,
+    "radiusMeters": 200
+  }
+]
