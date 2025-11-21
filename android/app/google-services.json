@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "752134733208",
+    "project_id": "safeher-ccfe5",
+    "storage_bucket": "safeher-ccfe5.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:752134733208:android:ca9bedea1d3012087affed",
+        "android_client_info": {
+          "package_name": "com.example.safeher"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCaNmRskprUhYZp66KKLZsZjv__AmUnI9I"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

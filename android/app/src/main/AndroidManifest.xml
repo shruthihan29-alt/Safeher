@@ -2,21 +2,30 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="com.example.safeher">
 
-    <!-- PERMISSIONS -->
+    <!-- ✅ PERMISSIONS actually needed by the app -->
+
+    <!-- Firebase / HTTP / Nominatim / Maps links -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Location for Safe Route, reporting, live location sharing -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.SEND_SMS" />
-    <uses-permission android:name="android.permission.RECEIVE_SMS" />
-    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
-    <uses-permission android:name="android.permission.CALL_PHONE" />
+
+    <!-- Vibration for fake incoming police call -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Camera for fake police video call preview -->
     <uses-permission android:name="android.permission.CAMERA" />
-    <uses-feature android:name="android.hardware.camera.any" />
+
+    <!-- Camera is nice-to-have, not required to install the app -->
+    <uses-feature
+        android:name="android.hardware.camera.any"
+        android:required="false" />
 
     <application
         android:name="${applicationName}"
         android:label="safeher"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@mipmap/launcher_icon"
         android:usesCleartextTraffic="true">
 
         <activity
@@ -38,13 +47,13 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
-
     </application>
 
+    <!-- Optional: queries (you can keep or remove if not needed) -->
     <queries>
         <intent>
-            <action android:name="android.intent.action.PROCESS_TEXT"/>
-            <data android:mimeType="text/plain"/>
+            <action android:name="android.intent.action.PROCESS_TEXT" />
+            <data android:mimeType="text/plain" />
         </intent>
     </queries>
 

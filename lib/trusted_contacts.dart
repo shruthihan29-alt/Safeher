@@ -1,13 +1,20 @@
 import 'dart:async';
+import 'dart:math';
 
+import 'package:audioplayers/audioplayers.dart';
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:sensors_plus/sensors_plus.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:share_plus/share_plus.dart';
-import 'package:audioplayers/audioplayers.dart';
 import 'package:vibration/vibration.dart';
-import 'package:camera/camera.dart';
+
+import 'report_unsafe_place_page.dart';
+import 'safe_route_page.dart';
+import 'safety_tips_page.dart';
+import 'settings_page.dart';
 
 class TrustedContactsPage extends StatefulWidget {
   const TrustedContactsPage({super.key});
@@ -17,17 +24,39 @@ class TrustedContactsPage extends StatefulWidget {
 }
 
 class _TrustedContactsPageState extends State<TrustedContactsPage> {
-  List<String> contacts = [];
+  // ---------- STATE ----------
   final TextEditingController _controller = TextEditingController();
   final AudioPlayer _audioPlayer = AudioPlayer();
+
+  List<String> contacts = [];
   bool _isSirenPlaying = false;
 
+  // Shake-to-SOS
+  bool _shakeEnabled = true;
+  static const _shakeKey = 'shake_sos_enabled';
+  StreamSubscription<AccelerometerEvent>? _accelSub;
+  DateTime? _lastShakeTime;
+
+  // Bottom nav
+  int _selectedTab = 0;
+
+  // ---------- INIT / DISPOSE ----------
   @override
   void initState() {
     super.initState();
     _loadContacts();
-    _preparePermissions(); // ask early so SOS is faster
-    _preloadSiren(); // load siren to memory
+    _preparePermissions();
+    _preloadSiren();
+    _loadShakeSetting();
+    _startShakeListener();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _audioPlayer.dispose();
+    _accelSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _preparePermissions() async {
@@ -44,7 +73,9 @@ class _TrustedContactsPageState extends State<TrustedContactsPage> {
 
   Future<void> _loadContacts() async {
     final prefs = await SharedPreferences.getInstance();
-    setState(() => contacts = prefs.getStringList('trusted_contacts') ?? []);
+    setState(() {
+      contacts = prefs.getStringList('trusted_contacts') ?? [];
+    });
   }
 
   Future<void> _saveContacts() async {
@@ -52,6 +83,75 @@ class _TrustedContactsPageState extends State<TrustedContactsPage> {
     await prefs.setStringList('trusted_contacts', contacts);
   }
 
+  // ---------- SHAKE SETTINGS ----------
+  Future<void> _loadShakeSetting() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _shakeEnabled = prefs.getBool(_shakeKey) ?? true;
+    });
+  }
+
+  void _startShakeListener() {
+    _accelSub = accelerometerEvents.listen((event) {
+      if (!_shakeEnabled) return;
+
+      final gX = event.x / 9.81;
+      final gY = event.y / 9.81;
+      final gZ = event.z / 9.81;
+      final gForce = sqrt(gX * gX + gY * gY + gZ * gZ);
+
+      const threshold = 2.2; // ≈ moderate shake
+      if (gForce > threshold) {
+        final now = DateTime.now();
+        if (_lastShakeTime == null ||
+            now.difference(_lastShakeTime!) > const Duration(seconds: 3)) {
+          _lastShakeTime = now;
+          _onShakeDetected();
+        }
+      }
+    });
+  }
+
+  Future<void> _onShakeDetected() async {
+    if (!mounted) return;
+
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Shake detected'),
+            content: const Text(
+              'Do you want to trigger SOS now?\n'
+              'This will open the Police dialer and SMS for your trusted contacts.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Yes, SOS'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (confirmed) {
+      _sendSOS();
+    }
+  }
+
+  Future<void> _openSettings() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const SettingsPage()),
+    );
+    // Reload setting when returning
+    _loadShakeSetting();
+  }
+
+  // ---------- CONTACTS ----------
   void _addContact() {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
@@ -63,10 +163,13 @@ class _TrustedContactsPageState extends State<TrustedContactsPage> {
   }
 
   void _deleteContact(int index) {
-    setState(() => contacts.removeAt(index));
+    setState(() {
+      contacts.removeAt(index);
+    });
     _saveContacts();
   }
 
+  // ---------- ACTIONS ----------
   Future<void> _shareLiveLocation() async {
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
@@ -96,7 +199,6 @@ class _TrustedContactsPageState extends State<TrustedContactsPage> {
 
     final googleMapsUrl =
         'https://www.google.com/maps?q=${position.latitude},${position.longitude}';
-
     await Share.share('🚨 SOS! Here is my live location: $googleMapsUrl');
   }
 
@@ -108,21 +210,25 @@ class _TrustedContactsPageState extends State<TrustedContactsPage> {
   }
 
   Future<void> _playSiren() async {
-    await _audioPlayer.resume(); // uses preloaded sound
-    if (mounted) setState(() => _isSirenPlaying = true);
+    await _audioPlayer.resume();
+    if (mounted) {
+      setState(() => _isSirenPlaying = true);
+    }
   }
 
   Future<void> _stopSiren() async {
     await _audioPlayer.stop();
-    if (mounted) setState(() => _isSirenPlaying = false);
+    if (mounted) {
+      setState(() => _isSirenPlaying = false);
+    }
   }
 
   Future<void> _sendSOS() async {
-    // 🔊 Siren
+    // 1) Siren (non-blocking)
     _playSiren();
     Future.delayed(const Duration(seconds: 10), _stopSiren);
 
-    // 1. Location permission
+    // 2) Location
     LocationPermission permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
@@ -144,26 +250,23 @@ class _TrustedContactsPageState extends State<TrustedContactsPage> {
       return;
     }
 
-    // 2. Get current location
     final position = await Geolocator.getCurrentPosition(
       desiredAccuracy: LocationAccuracy.high,
     );
-
     final mapsUrl =
         'https://www.google.com/maps?q=${position.latitude},${position.longitude}';
     final sosText = '🚨 SOS! I need help. My live location: $mapsUrl';
 
-    // 3. Open dialer (119) – user decides to place call
+    // 3) Open dialer (119)
     final callUri = Uri.parse('tel:119');
     if (await canLaunchUrl(callUri)) {
       launchUrl(callUri, mode: LaunchMode.externalApplication);
     }
 
-    // 4. Open SMS app for each trusted contact
+    // 4) Open SMS app for each trusted contact
     for (final number in contacts) {
-      final cleanNumber = number.replaceAll('+', '');
       final smsUri = Uri.parse(
-        'sms:$cleanNumber?body=${Uri.encodeComponent(sosText)}',
+        'sms:$number?body=${Uri.encodeComponent(sosText)}',
       );
       if (await canLaunchUrl(smsUri)) {
         await launchUrl(
@@ -175,7 +278,7 @@ class _TrustedContactsPageState extends State<TrustedContactsPage> {
 
     if (!mounted) return;
 
-    // 5. Show fake incoming police video call
+    // 5) Fake incoming call screen
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -184,14 +287,53 @@ class _TrustedContactsPageState extends State<TrustedContactsPage> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Trusted Contacts')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
+  // ---------- UI HELPERS ----------
+  Widget _buildShakeBanner(ColorScheme colors) {
+    final text = _shakeEnabled
+        ? 'Shake-to-SOS is ON. Add at least one trusted contact so SOS can also open SMS with your location.'
+        : 'Shake-to-SOS is OFF. You can enable it from Settings.';
+
+    // Use a different icon for OFF (since vibration_disabled may not exist)
+    final icon = _shakeEnabled ? Icons.vibration : Icons.phonelink_erase;
+
+    return Card(
+      color: colors.tertiaryContainer.withOpacity(0.95),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            Icon(icon, color: colors.onTertiaryContainer),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                text,
+                style: TextStyle(
+                  color: colors.onTertiaryContainer,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTrustedContactsCard(ColorScheme colors) {
+    return Card(
+      color: colors.surface,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Trusted Contacts',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
             TextField(
               controller: _controller,
               keyboardType: TextInputType.phone,
@@ -204,37 +346,135 @@ class _TrustedContactsPageState extends State<TrustedContactsPage> {
               ),
               onSubmitted: (_) => _addContact(),
             ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: contacts.isEmpty
-                  ? const Center(child: Text('No trusted contacts yet'))
-                  : ListView.builder(
-                      itemCount: contacts.length,
-                      itemBuilder: (context, i) => ListTile(
-                        leading: const Icon(Icons.person),
+            const SizedBox(height: 12),
+            contacts.isEmpty
+                ? SizedBox(
+                    height: 100,
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.group_outlined,
+                              color: colors.onSurface.withOpacity(0.4),
+                              size: 40),
+                          const SizedBox(height: 8),
+                          Text(
+                            'No trusted contacts yet',
+                            style: TextStyle(
+                              color: colors.onSurface.withOpacity(0.7),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Add at least one phone number so SOS can notify them.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: colors.onSurface.withOpacity(0.6),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: contacts.length,
+                    itemBuilder: (context, i) => Card(
+                      elevation: 0,
+                      color: colors.surfaceVariant.withOpacity(0.4),
+                      child: ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: colors.primary.withOpacity(0.15),
+                          child: Icon(Icons.person,
+                              color: colors.primary, size: 20),
+                        ),
                         title: Text(contacts[i]),
                         trailing: IconButton(
-                          icon: const Icon(Icons.delete, color: Colors.red),
+                          icon: const Icon(Icons.delete,
+                              color: Colors.redAccent),
                           onPressed: () => _deleteContact(i),
                         ),
                       ),
                     ),
+                  ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNavigationCard(ColorScheme colors) {
+    return Card(
+      color: colors.surface,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Navigation & safety',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.route),
+              label: const Text('Safe Route Navigation'),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const SafeRoutePage(),
+                  ),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 48),
+                backgroundColor: colors.surfaceVariant,
+                foregroundColor: colors.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 8),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.report_problem),
+              label: const Text('Report Unsafe Place'),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const ReportUnsafePlacePage(),
+                  ),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 50),
+                backgroundColor: Colors.orange,
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmergencyCard(ColorScheme colors) {
+    return Card(
+      color: colors.surface,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Emergency actions',
+              style: TextStyle(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
 
-            if (_isSirenPlaying) ...[
-              OutlinedButton.icon(
-                onPressed: _stopSiren,
-                icon: const Icon(Icons.volume_off),
-                label: const Text('Stop Siren'),
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 48),
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
-
-            // 🚨 BIG SOS BUTTON
+            // SOS big button
             ElevatedButton.icon(
               onPressed: _sendSOS,
               icon: const Icon(Icons.emergency, color: Colors.white, size: 30),
@@ -249,30 +489,42 @@ class _TrustedContactsPageState extends State<TrustedContactsPage> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color.fromARGB(255, 209, 3, 3),
                 foregroundColor: Colors.white,
-                minimumSize: const Size(double.infinity, 70),
+                minimumSize: const Size(double.infinity, 64),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(20),
                 ),
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
+
+            // Siren STOP (if playing)
+            if (_isSirenPlaying) ...[
+              OutlinedButton.icon(
+                onPressed: _stopSiren,
+                icon: const Icon(Icons.volume_off),
+                label: const Text('Stop Siren'),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 48),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
 
             ElevatedButton.icon(
               icon: const Icon(Icons.share_location),
               label: const Text('Send Live Location'),
               onPressed: _shareLiveLocation,
               style: ElevatedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 50),
+                minimumSize: const Size(double.infinity, 48),
               ),
             ),
             const SizedBox(height: 8),
-
             ElevatedButton.icon(
               icon: const Icon(Icons.local_police),
               label: const Text('Call 119 (Police)'),
               onPressed: _callPolice,
               style: ElevatedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 50),
+                minimumSize: const Size(double.infinity, 48),
               ),
             ),
           ],
@@ -280,9 +532,109 @@ class _TrustedContactsPageState extends State<TrustedContactsPage> {
       ),
     );
   }
+
+  // ---------- BUILD ----------
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Row(
+          children: [
+            // Small logo next to title
+            Image.asset(
+              'assets/images/safeher_logo.png',
+              width: 24,
+              height: 24,
+              errorBuilder: (_, __, ___) =>
+                  const Icon(Icons.shield, size: 22),
+            ),
+            const SizedBox(width: 8),
+            const Text('SOS & Trusted Contacts'),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            tooltip: 'Settings',
+            onPressed: _openSettings,
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(
+            'Emergency dashboard',
+            style: theme.textTheme.headlineSmall
+                ?.copyWith(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'SOS, trusted contacts, and quick safety tools.',
+            style: theme.textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 12),
+
+          _buildShakeBanner(colors),
+          const SizedBox(height: 16),
+
+          _buildTrustedContactsCard(colors),
+          const SizedBox(height: 16),
+
+          _buildNavigationCard(colors),
+          const SizedBox(height: 16),
+
+          _buildEmergencyCard(colors),
+          const SizedBox(height: 16),
+        ],
+      ),
+
+      // Bottom nav
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _selectedTab,
+        onTap: (index) {
+          setState(() => _selectedTab = index);
+          if (index == 1) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const SafetyTipsPage(),
+              ),
+            );
+          } else if (index == 2) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const SafeRoutePage(),
+              ),
+            );
+          }
+        },
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.sos),
+            label: 'SOS',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.shield_moon_outlined),
+            label: 'Safety Tips',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.map),
+            label: 'Safe Route',
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-// ======================= FAKE INCOMING POLICE CALL =======================
+// ===================================================================
+// FAKE INCOMING POLICE CALL
+// ===================================================================
 
 class FakeIncomingPoliceCallPage extends StatefulWidget {
   const FakeIncomingPoliceCallPage({super.key});
@@ -305,15 +657,15 @@ class _FakeIncomingPoliceCallPageState
   }
 
   Future<void> _startRinging() async {
-    // Vibrate every second to simulate ringing
     if ((await Vibration.hasVibrator()) ?? false) {
-      _vibrationTimer = Timer.periodic(
-        const Duration(seconds: 1),
-        (_) => Vibration.vibrate(duration: 300),
-      );
+      _vibrationTimer =
+          Timer.periodic(const Duration(seconds: 1), (_) {
+        Vibration.vibrate(duration: 300);
+      });
     }
 
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+    _timer =
+        Timer.periodic(const Duration(seconds: 1), (_) {
       setState(() => _seconds++);
     });
   }
@@ -341,9 +693,7 @@ class _FakeIncomingPoliceCallPageState
     );
   }
 
-  void _declineCall() {
-    Navigator.pop(context);
-  }
+  void _declineCall() => Navigator.pop(context);
 
   @override
   Widget build(BuildContext context) {
@@ -394,7 +744,6 @@ class _FakeIncomingPoliceCallPageState
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  // Decline
                   GestureDetector(
                     onTap: _declineCall,
                     child: Column(
@@ -412,7 +761,6 @@ class _FakeIncomingPoliceCallPageState
                       ],
                     ),
                   ),
-                  // Accept
                   GestureDetector(
                     onTap: _acceptCall,
                     child: Column(
@@ -440,7 +788,9 @@ class _FakeIncomingPoliceCallPageState
   }
 }
 
-// ======================= FAKE POLICE VIDEO CALL =======================
+// ===================================================================
+// FAKE POLICE VIDEO CALL
+// ===================================================================
 
 class FakePoliceVideoCallPage extends StatefulWidget {
   const FakePoliceVideoCallPage({super.key});
@@ -461,8 +811,8 @@ class _FakePoliceVideoCallPageState extends State<FakePoliceVideoCallPage> {
   void initState() {
     super.initState();
 
-    // Call duration timer
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+    _timer =
+        Timer.periodic(const Duration(seconds: 1), (_) {
       setState(() => _seconds++);
     });
 
@@ -472,13 +822,8 @@ class _FakePoliceVideoCallPageState extends State<FakePoliceVideoCallPage> {
   Future<void> _initCamera() async {
     try {
       final cameras = await availableCameras();
+      if (cameras.isEmpty) return;
 
-      if (cameras.isEmpty) {
-        debugPrint('No cameras available');
-        return;
-      }
-
-      // Prefer front camera; fallback to first
       final frontCamera = cameras.firstWhere(
         (c) => c.lensDirection == CameraLensDirection.front,
         orElse: () => cameras.first,
@@ -487,7 +832,7 @@ class _FakePoliceVideoCallPageState extends State<FakePoliceVideoCallPage> {
       _cameraController = CameraController(
         frontCamera,
         ResolutionPreset.medium,
-        enableAudio: false, // we just need preview
+        enableAudio: false,
       );
 
       _cameraInitFuture = _cameraController!.initialize();
@@ -518,12 +863,12 @@ class _FakePoliceVideoCallPageState extends State<FakePoliceVideoCallPage> {
         child: Column(
           children: [
             const SizedBox(height: 16),
-            // Top bar
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Colors.white),
+                  icon:
+                      const Icon(Icons.arrow_back, color: Colors.white),
                   onPressed: () => Navigator.pop(context),
                 ),
                 Column(
@@ -548,14 +893,10 @@ class _FakePoliceVideoCallPageState extends State<FakePoliceVideoCallPage> {
                 const SizedBox(width: 48),
               ],
             ),
-
             const SizedBox(height: 16),
-
-            // Main area with fake police video + self-view
             Expanded(
               child: Stack(
                 children: [
-                  // Background "police" video
                   Container(
                     width: double.infinity,
                     decoration: const BoxDecoration(
@@ -596,8 +937,6 @@ class _FakePoliceVideoCallPageState extends State<FakePoliceVideoCallPage> {
                       ],
                     ),
                   ),
-
-                  // Small camera preview (your face) in corner
                   Positioned(
                     right: 16,
                     bottom: 24,
@@ -640,10 +979,9 @@ class _FakePoliceVideoCallPageState extends State<FakePoliceVideoCallPage> {
                 ],
               ),
             ),
-
-            // Bottom controls
             Padding(
-              padding: const EdgeInsets.only(bottom: 24, top: 16),
+              padding:
+                  const EdgeInsets.only(bottom: 24, top: 16),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: const [

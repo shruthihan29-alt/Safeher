@@ -1,6 +1,6 @@
 name: safeher
 description: "A new Flutter project."
-publish_to: 'none' # Remove this line if you want to publish to pub.dev
+publish_to: 'none'
 
 version: 1.0.0+1
 
@@ -11,23 +11,49 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # Packages you added
-  shared_preferences: ^2.5.3
+  # Core app packages
+  shared_preferences: ^2.3.3
   url_launcher: ^6.3.2
   geolocator: ^14.0.2
   share_plus: ^12.0.0
   audioplayers: ^6.5.1
   cupertino_icons: ^1.0.8
-  telephony: ^0.2.0
+  http: ^1.5.0
+  sensors_plus: ^5.0.0
+
+  # 📸 Camera (Android/iOS ONLY)
+  camera: ^0.11.0+1
+
+  # 🔔 Vibration (Android/iOS ONLY)
   vibration: ^3.1.4
-  camera: ^0.11.3
+  
+  # 🔥 Firebase
+  firebase_core: ^3.15.0
+  cloud_firestore: ^5.6.0
+
+  # 🗺️ Google Maps for web + mobile
+  google_maps_flutter: ^2.6.0
+  google_maps_flutter_web: ^0.5.6
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
 
+  # 🧩 App icon generator
+  flutter_launcher_icons: ^0.13.1
+
 flutter:
   uses-material-design: true
   assets:
+    # SOS siren sound
     - assets/sounds/siren.mp3
+    # App logo (put your SafeHer logo file here)
+    - assets/images/safeher_logo.png
+
+# 🚀 App icon configuration (uses the logo above)
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/images/safeher_logo.png"
+  min_sdk_android: 21
